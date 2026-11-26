@@ -504,6 +504,24 @@ public abstract class AuditLogRepositoryContractTest extends AccessContractBase 
     assertThat(ids(platformFind(actor, "MEM-" + prefix, null, 0, 10))).containsExactly(member);
   }
 
+  @Test
+  @DisplayName("findPlatform 대상 필터는 멤버 추가 행을 metadata.tenantName(공용 테넌트 감사 details)으로도 찾는다 — WD-1180")
+  void findPlatform_memberAddRow_foundByTenantName() {
+    String actor = prefix + "-op";
+    long member =
+        platformRow(
+            actor + "1",
+            "MEMBER_ADD",
+            "8",
+            base,
+            "{\"tenantId\":8,\"tenantSlug\":\"acme\",\"tenantName\":\"에이씨엠이-"
+                + prefix
+                + "\",\"username\":\"kim\"}");
+    platformRow(actor + "2", "TENANT_CREATE", "9", base.minusMinutes(1), "{\"tenantSlug\":\"zz\"}");
+
+    assertThat(ids(platformFind(actor, "에이씨엠이-" + prefix, null, 0, 10))).containsExactly(member);
+  }
+
   private long platformRow(
       String username, String action, String resourceId, LocalDateTime t, String meta) {
     return fx.insertAuditLog(null, username, action, "tenant", resourceId, "p", t, meta);

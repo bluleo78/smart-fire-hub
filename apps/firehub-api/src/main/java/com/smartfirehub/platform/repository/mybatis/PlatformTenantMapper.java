@@ -1,6 +1,7 @@
 package com.smartfirehub.platform.repository.mybatis;
 
 import com.smartfirehub.global.platformdb.mybatis.PlatformMapper;
+import com.smartfirehub.platform.dto.TenantLabel;
 import com.smartfirehub.platform.dto.TenantMemberResponse;
 import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import java.util.List;
@@ -25,6 +26,9 @@ public interface PlatformTenantMapper {
   int countBySlug(@Param("slug") String slug);
 
   int countById(@Param("tenantId") Long tenantId);
+
+  /** slug·이름만(멤버 수 집계 없음). 없으면 null. */
+  TenantLabel selectLabelById(@Param("tenantId") Long tenantId);
 
   List<TenantSummaryResponse> selectAll();
 

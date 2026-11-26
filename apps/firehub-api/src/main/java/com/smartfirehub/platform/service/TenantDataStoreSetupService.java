@@ -390,6 +390,8 @@ public class TenantDataStoreSetupService {
             .toList();
     ExternalDbTarget target =
         new ExternalDbTarget(row.backend(), row.host(), row.port(), row.database());
+    // 감사용 테넌트 라벨은 저장소 행 잠금 전에 읽는다(WD-1180) — 잠금 안에서 쿼리를 늘리지 않는다.
+    Map<String, Object> tenantAudit = tenantAuditDetails(tenantId);
     // 트랜잭션 밖: 외부 접속 동안 DB 커넥션을 쥐지 않는다.
     List<AccountCheck> checks = connectionTester.verifyAccounts(target, row.schemaName(), planned);
     List<String> failed = checks.stream().filter(c -> !c.ok()).map(AccountCheck::username).toList();
@@ -408,7 +410,7 @@ public class TenantDataStoreSetupService {
               log.warn("검증 도중 저장소 비밀번호가 재발급되어 READY 로 바꾸지 않음: tenant={}", tenantId);
             }
           }
-          Map<String, Object> details = tenantAuditDetails(tenantId);
+          Map<String, Object> details = new LinkedHashMap<>(tenantAudit);
           details.put("result", result);
           details.put("failedAccounts", failed);
           auditRecorder.record(
@@ -435,6 +437,8 @@ public class TenantDataStoreSetupService {
   @Transactional
   public DataStoreScriptResponse reissueScript(long tenantId, long operatorId) {
     // verify 의 READY 전환과 직렬화한다 — 잠근 뒤 읽어야 방금 READY 가 된 저장소를 PENDING 으로 오인해 재발급하지 않는다.
+    // 감사용 테넌트 라벨은 잠금 전에 읽는다(WD-1180) — 잠금 보유 시간에 쿼리를 더하지 않는다.
+    Map<String, Object> details = tenantAuditDetails(tenantId);
     repository.lockForUpdate(tenantId);
     TenantDataStoreRow row = requireExternalStore(tenantId);
     if (row.mode() != DataStoreProvisionMode.SCRIPT
@@ -447,7 +451,6 @@ public class TenantDataStoreSetupService {
     TiberoAccountPlan plan =
         TiberoAccountPlan.generate(tenantId, row.tablespace(), passwordGenerator);
     repository.replacePasswords(tenantId, toStoredAccounts(plan));
-    Map<String, Object> details = tenantAuditDetails(tenantId);
     details.put("dataStoreBackend", row.backend().name());
     auditRecorder.record(
         operatorId,
@@ -463,17 +466,18 @@ public class TenantDataStoreSetupService {
    * 저장소 감사(VERIFY·SCRIPT_REISSUE) details 의 앞머리 — 테넌트 id·slug·이름(WD-1180).
    *
    * <p>숫자 id 만 남기면 콘솔 감사 로그 「대상」 열에 "7" 만 보이고 대상 필터도 slug·이름으로 찾지 못한다(다른 테넌트 감사와 같은 키를 써야 한다). 테넌트를
-   * 못 찾으면(방금 삭제 등) id 만 남기고 감사 자체는 막지 않는다.
+   * 못 찾으면(방금 삭제 등) id 만 남기고 감사 자체는 막지 않는다. 멤버 수를 세는 {@code findById} 대신 가벼운 {@code findLabelById} 를 쓰며, 호출처는 저장소 행
+   * 잠금 전에 부른다.
    */
   private Map<String, Object> tenantAuditDetails(long tenantId) {
     Map<String, Object> details = new LinkedHashMap<>();
     tenantRepository
-        .findById(tenantId)
+        .findLabelById(tenantId)
         .ifPresentOrElse(
-            tenant -> {
-              details.putAll(PlatformAuditRecorder.tenantAuditDetails(tenantId, tenant));
-              details.put("tenantName", tenant.name());
-            },
+            label ->
+                details.putAll(
+                    PlatformAuditRecorder.tenantAuditDetails(
+                        tenantId, label.slug(), label.name())),
             () -> details.put("tenantId", tenantId));
     return details;
   }

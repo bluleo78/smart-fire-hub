@@ -1,5 +1,6 @@
 package com.smartfirehub.platform.repository;
 
+import com.smartfirehub.platform.dto.TenantLabel;
 import com.smartfirehub.platform.dto.TenantMemberResponse;
 import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import java.util.List;
@@ -28,6 +29,14 @@ public interface PlatformTenantRepository {
 
   /** 테넌트가 있는지. 존재만 확인하는 호출처가 멤버 수 집계까지 하는 {@link #findById} 를 부르지 않게 한다. */
   boolean existsById(long tenantId);
+
+  /**
+   * 테넌트의 slug·이름만 읽는다(멤버 수 집계 없음). 없으면 empty.
+   *
+   * <p>감사 details 처럼 라벨만 필요한 곳이 멤버 수를 세는 {@link #findById} 를 부르지 않게 한다 — 행 잠금 안에서 불필요한 집계 쿼리를 늘리지 않기
+   * 위해서다(WD-1180).
+   */
+  Optional<TenantLabel> findLabelById(long tenantId);
 
   /** 전체 테넌트 목록(id 오름차순) + 멤버 수 집계. */
   List<TenantSummaryResponse> findAll();

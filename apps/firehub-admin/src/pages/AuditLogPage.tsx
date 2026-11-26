@@ -51,12 +51,21 @@ const ACTION_LABELS: Record<string, string> = {
 };
 
 /**
+ * 테넌트 표기 한 곳(WD-1180) — 이름이 있으면 "이름 (slug)", 이름 키가 없는 옛 행은 slug 만.
+ * 저장소 확인·재발급, 멤버 추가·역할 부여, 소유권 이전이 모두 이 표기를 쓴다.
+ */
+function tenantLabelOf(m: { tenantSlug: string; tenantName?: unknown }): string {
+  return typeof m.tenantName === 'string' ? `${m.tenantName} (${m.tenantSlug})` : m.tenantSlug;
+}
+
+/**
  * 대상: 계정 조치는 metadata.targetUsername, 테넌트 생명주기는 "이름 (slug)"(WD-12 — 숫자 id 는 운영자에게 의미가 없다),
  * 둘 다 없으면 resourceId, 그것도 없으면 '-'.
  * WD-1158: 소유권 이전(OWNER_TRANSFER)은 "옛1, 옛2 → 새 · 테넌트", 옛 소유자가 없던 테넌트의 복구 지정은 "→ 새 · 테넌트",
  * 이름 키가 없는 옛 행은 기존 테넌트 표기 그대로.
  * WD-1180: 최초 운영자 가입(BOOTSTRAP_SIGNUP)은 계정 숫자 id 대신 metadata.username, 멤버 추가(MEMBER_ADD)·그 짝 역할 부여(ROLE_ASSIGN)는
- * "멤버 · 테넌트"(누가 추가됐는지가 빠져 있었다). 저장소 확인·재발급은 서버가 싣는 tenantSlug·tenantName 으로 "이름 (slug)" 가 된다.
+ * "멤버 · 테넌트"(누가 추가됐는지가 빠져 있었다). 테넌트 부분은 서버가 싣는 tenantSlug·tenantName 으로 모두 "이름 (slug)" 가 되고,
+ * tenantName 이 없는 옛 행은 slug 만 보인다.
  * 해당 키가 없는 옛 행은 기존 표기(resourceId 등) 그대로.
  */
 function targetOf(log: PlatformAuditLogResponse): string {
@@ -65,7 +74,7 @@ function targetOf(log: PlatformAuditLogResponse): string {
   // WD-1180: 부트스트랩 가입 행은 resourceId 가 계정 숫자 id 라 의미가 없다 — 가입한 아이디를 보인다.
   if (log.actionType === 'BOOTSTRAP_SIGNUP' && typeof m?.username === 'string') return m.username;
   if (typeof m?.tenantSlug === 'string') {
-    const tenant = typeof m.tenantName === 'string' ? `${m.tenantName} (${m.tenantSlug})` : m.tenantSlug;
+    const tenant = tenantLabelOf({ tenantSlug: m.tenantSlug, tenantName: m.tenantName });
     // WD-1158: 소유권 이전은 옛 소유자 → 새 소유자 이름을 앞에 붙인다(서버가 이름을 못 찾은 사용자는 이미 뺀다).
     // 이름 키가 없는 옛 행은 기존 테넌트 표기 그대로.
     // 옛 소유자가 없던 테넌트(복구 지정)는 fromUsernames 가 비거나 없다 — 그래도 새 소유자 이름은 보여야 한다.

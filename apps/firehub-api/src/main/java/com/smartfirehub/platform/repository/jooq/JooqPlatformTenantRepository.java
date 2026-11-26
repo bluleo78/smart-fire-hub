@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
+import com.smartfirehub.platform.dto.TenantLabel;
 import com.smartfirehub.platform.dto.TenantMemberResponse;
 import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import com.smartfirehub.platform.repository.PlatformTenantRepository;
@@ -70,6 +71,14 @@ public class JooqPlatformTenantRepository implements PlatformTenantRepository {
         dsl.selectOne()
             .from(table(name("tenant")))
             .where(field(name("id"), Long.class).eq(tenantId)));
+  }
+
+  /** slug·이름만 읽는다 — 멤버 수 서브쿼리 없이 tenant 한 행만 본다(WD-1180). */
+  @Override
+  public Optional<TenantLabel> findLabelById(long tenantId) {
+    return dsl.fetch("select slug, name from tenant where id = ?", tenantId).stream()
+        .map(r -> new TenantLabel(r.get("slug", String.class), r.get("name", String.class)))
+        .findFirst();
   }
 
   @Override
