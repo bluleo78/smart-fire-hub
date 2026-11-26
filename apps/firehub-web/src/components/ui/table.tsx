@@ -79,11 +79,13 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
 }
 
 // WD-755: 본문 행(TableRow)은 옅은 행 구분선(row-divider)이고, 머리와 본문 사이 선만 외곽 단계(border-border)로 둔다.
+// WD-1121: 카드 안 머리 띠는 배경 3단(§1-7)의 한 단계 위라 알파 없는 bg-muted 로 칠한다(푸터와 짝).
+// 칠하지 않으면 본문과 같은 면이라 선 하나로만 갈라지며, 머리 hover(muted/50)는 같은 띠 위라 따로 끄지 않는다.
 function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b [&_tr]:border-border", className)}
+      className={cn("bg-muted [&_tr]:border-b [&_tr]:border-border", className)}
       {...props}
     />
   )
