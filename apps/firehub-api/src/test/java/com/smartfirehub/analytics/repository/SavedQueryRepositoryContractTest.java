@@ -8,6 +8,7 @@ import com.smartfirehub.analytics.dto.SavedQueryResponse;
 import com.smartfirehub.analytics.dto.UpdateSavedQueryRequest;
 import com.smartfirehub.analytics.repository.SavedQueryRepository.RawSavedQuery;
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.naming.NameComparison;
 import com.smartfirehub.global.platformdb.mybatis.LongTextAssertions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
@@ -27,7 +28,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p>saved_query 는 테넌트 정책(RLS) 아래 있어 호출은 늘 테넌트 컨텍스트로 감싼다. 공유 가시성(Review Focus 4): 남의 비공유 쿼리는 목록·건수·
  * 단건·폴더에 안 나오고 공유된 것은 나온다, {@code shareQueries} 는 이번에 실제로 공유로 바뀐 내 쿼리만 돌려준다. 연결 데이터셋 이름은 조회자가 볼 수
- * 없는 등급이면 null 로 가리고 id 는 남긴다. 설명은 빈 문자열·공백·Cf 만이어도 모든 DB 에서 null 로 저장된다(WD-1144, blankToNull) — 기대값을 DB 별로 가르지 않는다.
+ * 없는 등급이면 null 로 가리고 id 는 남긴다. 설명은 빈 문자열·공백·Cf 만이어도 모든 DB 에서 null 로 저장된다(WD-1144, blankToNull) —
+ * 기대값을 DB 별로 가르지 않는다.
  */
 public abstract class SavedQueryRepositoryContractTest extends TenantPairContractBase {
 
@@ -72,6 +74,31 @@ public abstract class SavedQueryRepositoryContractTest extends TenantPairContrac
 
   private long count(String search, String folder, Boolean sharedOnly, Boolean mineOnly) {
     return inA(() -> repository().countAll(search, folder, sharedOnly, mineOnly, me));
+  }
+
+  /**
+   * 이름 중복 SQL 의 기준을 실행해 본다(WD-1094) — 앞뒤 전각 공백이 붙은 이름은 PG(jOOQ·MyBatis) 에서 같은 이름이고, Tibero 의
+   * lower(trim) 은 ASCII 만 걷으므로 다른 이름이다. 구현이 알리는 {@code nameComparison()} 이 이 결과와 일치해야 개명 판정이 SQL 과
+   * 어긋나지 않는다. (DTO 가 앞뒤 공백을 걷으므로 저장 행이 아니라 조회 인자 쪽에 공백을 덧댄다.)
+   */
+  @Test
+  @DisplayName("existsByOwnerAndName 은 대소문자·ASCII 공백을 무시하고 유니코드 공백은 nameComparison 기준으로 비교한다")
+  void existsByOwnerAndName_followsNameComparison() {
+    Long id = insertA(me, req("Query-" + prefix, null, false));
+
+    assertThat(inA(() -> repository().existsByOwnerAndName(me, " query-" + prefix + " ", null)))
+        .as("ASCII 공백·대소문자는 항상 무시")
+        .isTrue();
+    boolean unicode = repository().nameComparison() == NameComparison.UNICODE_TRIM;
+    assertThat(inA(() -> repository().existsByOwnerAndName(me, "\u3000Query-" + prefix, null)))
+        .as("앞뒤 전각 공백은 UNICODE_TRIM 일 때만 같은 이름")
+        .isEqualTo(unicode);
+    assertThat(inA(() -> repository().existsByOwnerAndName(me, "Query-" + prefix, id)))
+        .as("자기 자신은 제외")
+        .isFalse();
+    assertThat(inA(() -> repository().existsByOwnerAndName(other, "Query-" + prefix, null)))
+        .as("다른 소유자")
+        .isFalse();
   }
 
   // ---- insert·단건 ----

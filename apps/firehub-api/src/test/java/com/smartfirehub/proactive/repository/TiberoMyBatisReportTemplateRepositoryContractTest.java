@@ -30,7 +30,8 @@ class TiberoMyBatisReportTemplateRepositoryContractTest
             ReportTemplateRepository.class,
             new MyBatisReportTemplateRepository(
                 poc.mapper(ReportTemplateMapper.class),
-                JsonMapper.builderWithJackson2Defaults().build()));
+                JsonMapper.builderWithJackson2Defaults().build(),
+                poc.sqlSessionFactory()));
   }
 
   @Override

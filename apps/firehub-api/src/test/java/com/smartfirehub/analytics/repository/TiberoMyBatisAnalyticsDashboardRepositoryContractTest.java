@@ -27,7 +27,8 @@ class TiberoMyBatisAnalyticsDashboardRepositoryContractTest
     repository =
         poc.transactional(
             AnalyticsDashboardRepository.class,
-            new MyBatisAnalyticsDashboardRepository(poc.mapper(AnalyticsDashboardMapper.class)));
+            new MyBatisAnalyticsDashboardRepository(
+                poc.mapper(AnalyticsDashboardMapper.class), poc.sqlSessionFactory()));
   }
 
   @Override

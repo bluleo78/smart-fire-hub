@@ -11,12 +11,15 @@ import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.analytics.repository.mybatis.AnalyticsDashboardRows.DashboardInsert;
 import com.smartfirehub.analytics.repository.mybatis.AnalyticsDashboardRows.DashboardRow;
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.naming.NameComparison;
 import com.smartfirehub.global.platformdb.mybatis.InChunks;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.validation.TextRules;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.apache.ibatis.session.SqlSessionFactory;
 
 /**
  * AnalyticsDashboardRepository 의 MyBatis 구현(WD-710) — {@code JooqAnalyticsDashboardRepository} 와 같은
@@ -31,8 +34,15 @@ public class MyBatisAnalyticsDashboardRepository implements AnalyticsDashboardRe
 
   private final AnalyticsDashboardMapper mapper;
 
-  public MyBatisAnalyticsDashboardRepository(AnalyticsDashboardMapper mapper) {
+  /** 이 설치본의 이름 비교 기준(WD-1094) — 매퍼가 문을 고르는 MyBatis databaseId 에서 한 번 정한다. */
+  private final NameComparison nameComparison;
+
+  /** 이름 비교 기준은 SqlSessionFactory 의 databaseId 에서 정한다({@link NameComparison#forDatabaseId}). */
+  public MyBatisAnalyticsDashboardRepository(
+      AnalyticsDashboardMapper mapper, SqlSessionFactory sqlSessionFactory) {
     this.mapper = mapper;
+    this.nameComparison =
+        NameComparison.forDatabaseId(sqlSessionFactory.getConfiguration().getDatabaseId());
   }
 
   /** 대상 차트를 쓰는 대시보드별 위젯 수·가시성(WD-86). 빈 입력은 쿼리 없이 빈 목록 — jOOQ 판과 같다. */
@@ -155,9 +165,20 @@ public class MyBatisAnalyticsDashboardRepository implements AnalyticsDashboardRe
         r.updatedAt());
   }
 
-  /** 같은 소유자·같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  /**
+   * 같은 소유자·같은 이름 존재 여부(WD-824). 비교 방식은 DB 별 매퍼 문이 정한다(WD-1094) — PostgreSQL 은 앞뒤·안쪽 유니코드 공백을 ASCII
+   * 공백으로 바꾼 뒤 lower(trim), 그 밖은 ASCII trim.
+   */
   @Override
   public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
-    return mapper.countByOwnerAndName(ownerId, name, excludeId) > 0;
+    return mapper.countByOwnerAndName(
+            ownerId, name, excludeId, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII)
+        > 0;
+  }
+
+  /** SQL 이 쓰는 비교 기준(WD-1094) — 생성 시 databaseId 로 정한 값. */
+  @Override
+  public NameComparison nameComparison() {
+    return nameComparison;
   }
 }

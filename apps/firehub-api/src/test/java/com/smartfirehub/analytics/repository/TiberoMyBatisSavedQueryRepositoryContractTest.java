@@ -26,7 +26,8 @@ class TiberoMyBatisSavedQueryRepositoryContractTest extends SavedQueryRepository
     repository =
         poc.transactional(
             SavedQueryRepository.class,
-            new MyBatisSavedQueryRepository(poc.mapper(SavedQueryMapper.class)));
+            new MyBatisSavedQueryRepository(
+                poc.mapper(SavedQueryMapper.class), poc.sqlSessionFactory()));
   }
 
   @Override

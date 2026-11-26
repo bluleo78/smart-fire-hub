@@ -26,6 +26,14 @@ public record CreateDashboardRequest(
         Integer autoRefreshSeconds) {
 
   /**
+   * 이름 앞뒤의 유니코드 공백(전각 U+3000·NBSP 포함)을 걷어 저장·중복 검사가 같은 값을 보게 한다(WD-1094). 공백만 다른 이름이 중복 검사를 비켜 가던
+   * 것을 막는다.
+   */
+  public CreateDashboardRequest {
+    name = TextRules.strip(name);
+  }
+
+  /**
    * 자동 새로고침 주기 상한(초) — 24시간(WD-327). 상한이 없으면 약 24.8일(2^31 ms)을 넘는 값에서 브라우저 타이머 지연이 32비트로 감겨 0 이 되고,
    * 대시보드를 연 화면이 위젯 데이터(저장 쿼리 실행)를 쉬지 않고 다시 요청한다. 하루보다 긴 자동 새로고침은 쓸모도 적다.
    */

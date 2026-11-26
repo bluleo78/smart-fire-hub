@@ -1,6 +1,7 @@
 package com.smartfirehub.proactive.repository;
 
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.naming.NameComparison;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
 import com.smartfirehub.proactive.dto.ReportTemplateSummaryResponse;
 import java.time.LocalDateTime;
@@ -78,8 +79,17 @@ public interface ReportTemplateRepository {
   int delete(Long id, Long userId);
 
   /**
-   * 내가 쓸 수 있는 양식(본인 것 + 기본 양식, user_id NULL) 중 같은 이름(앞뒤 공백·대소문자 무시)이 있는지(WD-824). 기본 양식은 모두에게 보이므로 내 양식이
-   * 기본 양식과 같은 이름을 가질 수 없게 하려고 기본 양식도 포함한다. excludeId 가 있으면 그 행은 뺀다(수정 시 자기 자신).
+   * 내가 쓸 수 있는 양식(본인 것 + 기본 양식, user_id NULL) 중 같은 이름(앞뒤 공백·대소문자 무시)이 있는지(WD-824). 기본 양식은 모두에게 보이므로
+   * 내 양식이 기본 양식과 같은 이름을 가질 수 없게 하려고 기본 양식도 포함한다. excludeId 가 있으면 그 행은 뺀다(수정 시 자기 자신).
    */
   boolean existsByOwnerAndName(long ownerId, String name, Long excludeId);
+
+  /**
+   * {@link #existsByOwnerAndName} 의 SQL 이 쓰는 이름 비교 기준(WD-1094). 개명 판정이 이 기준을 따라야 SQL 이 같게 보는 이름을
+   * 개명으로 놓치지 않는다 — DB 마다 SQL 이 달라 구현이 답한다. 기본값은 PostgreSQL(jOOQ) 구현의 UNICODE_TRIM 이고 MyBatis 구현만
+   * databaseId 로 재정의한다.
+   */
+  default NameComparison nameComparison() {
+    return NameComparison.UNICODE_TRIM;
+  }
 }

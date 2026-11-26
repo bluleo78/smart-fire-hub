@@ -95,7 +95,22 @@
     DELETE FROM report_template WHERE id = #{id} AND user_id = #{userId}
   </delete>
 
-  <!-- WD-824: 본인 양식 + 기본 양식 이름 중복 검사(lower(trim) 비교). excludeId 는 수정 시 자기 자신 제외. -->
+  <!--
+    WD-824: 본인 양식 + 기본 양식 이름 중복 검사. excludeId 는 수정 시 자기 자신 제외.
+    WD-1094: PG 는 앞뒤·안쪽 유니코드 공백(ws)을 ASCII 공백(sp)으로 바꾼 뒤 lower(trim) 비교한다(차트·대시보드·저장 쿼리와 같은 구조).
+    databaseId 없는 아래 문 = 공통 문(ASCII trim)이며 Tibero 와 매핑되지 않은 DB 가 쓴다 — 개명 판정
+    (MyBatisReportTemplateRepository 생성자)도 같은 databaseId 를 읽어 SQL 과 판정이 어긋나지 않는다.
+    두 문 모두 「내 양식 OR 기본 양식(user_id IS NULL)」 범위를 유지한다.
+  -->
+  <select id="countByOwnerAndName" resultType="_long" databaseId="postgresql">
+    SELECT COUNT(*) FROM report_template t
+     WHERE (t.user_id = #{ownerId} OR t.user_id IS NULL)
+       AND lower(trim(translate(t.name, #{ws}, #{sp}))) = lower(trim(translate(#{name}, #{ws}, #{sp})))
+    <if test="excludeId != null">
+       AND t.id &lt;&gt; #{excludeId}
+    </if>
+  </select>
+
   <select id="countByOwnerAndName" resultType="_long">
     SELECT COUNT(*) FROM report_template t
      WHERE (t.user_id = #{ownerId} OR t.user_id IS NULL)

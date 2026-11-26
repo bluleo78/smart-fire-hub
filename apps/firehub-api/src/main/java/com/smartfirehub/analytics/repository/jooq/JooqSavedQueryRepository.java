@@ -10,6 +10,7 @@ import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.util.LikePatternUtils;
+import com.smartfirehub.global.validation.PgEdgeSpaceChars;
 import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.jooq.JooqDatasetVisibility;
@@ -34,6 +35,9 @@ import org.springframework.stereotype.Repository;
 public class JooqSavedQueryRepository implements SavedQueryRepository {
 
   private final DSLContext dsl;
+
+  /** 이름 비교용 공백 정규화 SQL — PG 서버 인코딩별 translate 쌍을 고른다(WD-1162). */
+  private final PgEdgeSpaceChars edgeSpaceChars;
 
   // saved_query table fields
   private static final Table<?> SQ = table(name("saved_query"));
@@ -407,13 +411,16 @@ public class JooqSavedQueryRepository implements SavedQueryRepository {
         .fetchOne(0, Long.class);
   }
 
-  /** 같은 소유자·같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  /** 같은 소유자·같은 이름(유니코드 공백·대소문자 무시) 존재 여부(WD-824, WD-1094). */
   @Override
   public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
     Condition c =
         SQ_CREATED_BY
             .eq(ownerId)
-            .and(lower(trim(SQ_NAME)).eq(lower(trim(val(name, String.class)))));
+            .and(
+                edgeSpaceChars
+                    .normalize(SQ_NAME)
+                    .eq(edgeSpaceChars.normalize(val(name, String.class))));
     if (excludeId != null) {
       c = c.and(SQ_ID.ne(excludeId));
     }
@@ -436,5 +443,4 @@ public class JooqSavedQueryRepository implements SavedQueryRepository {
         r.get(SQ_UPDATED_AT),
         r.get("chart_count", Long.class));
   }
-
 }

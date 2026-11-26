@@ -16,10 +16,12 @@ import com.smartfirehub.analytics.repository.mybatis.ChartRows.ChartListRow;
 import com.smartfirehub.analytics.repository.mybatis.ChartRows.ChartRow;
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.exception.SerializationException;
+import com.smartfirehub.global.naming.NameComparison;
 import com.smartfirehub.global.platformdb.mybatis.InChunks;
 import com.smartfirehub.global.platformdb.mybatis.PlatformJson;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.global.platformdb.mybatis.PlatformSharing;
+import com.smartfirehub.global.validation.TextRules;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashSet;
@@ -27,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
@@ -47,9 +50,16 @@ public class MyBatisChartRepository implements ChartRepository {
   private final ChartMapper mapper;
   private final ObjectMapper objectMapper;
 
-  public MyBatisChartRepository(ChartMapper mapper, ObjectMapper objectMapper) {
+  /** 이 설치본의 이름 비교 기준(WD-1094) — 매퍼가 문을 고르는 MyBatis databaseId 에서 한 번 정한다. */
+  private final NameComparison nameComparison;
+
+  /** 이름 비교 기준은 SqlSessionFactory 의 databaseId 에서 정한다({@link NameComparison#forDatabaseId}). */
+  public MyBatisChartRepository(
+      ChartMapper mapper, ObjectMapper objectMapper, SqlSessionFactory sqlSessionFactory) {
     this.mapper = mapper;
     this.objectMapper = objectMapper;
+    this.nameComparison =
+        NameComparison.forDatabaseId(sqlSessionFactory.getConfiguration().getDatabaseId());
   }
 
   @Override
@@ -266,9 +276,20 @@ public class MyBatisChartRepository implements ChartRepository {
     }
   }
 
-  /** 같은 소유자·같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  /**
+   * 같은 소유자·같은 이름(대소문자·앞뒤 공백 무시) 존재 여부(WD-824). PG 는 앞뒤 유니코드 공백까지 translate 로 걷고, 그 밖의 DB 는 ASCII
+   * 공백만 걷는다(WD-1094).
+   */
   @Override
   public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
-    return mapper.countByOwnerAndName(ownerId, name, excludeId) > 0;
+    return mapper.countByOwnerAndName(
+            ownerId, name, excludeId, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII)
+        > 0;
+  }
+
+  /** SQL 이 쓰는 비교 기준(WD-1094) — 생성 시 databaseId 로 정한 값. */
+  @Override
+  public NameComparison nameComparison() {
+    return nameComparison;
   }
 }

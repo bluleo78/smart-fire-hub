@@ -11,15 +11,18 @@ import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.analytics.repository.mybatis.AnalyticsRows.SharingCounts;
 import com.smartfirehub.analytics.repository.mybatis.SavedQueryRows.SavedQueryInsert;
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.naming.NameComparison;
 import com.smartfirehub.global.platformdb.mybatis.InChunks;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.global.platformdb.mybatis.PlatformSharing;
+import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.mybatis.MyBatisDatasetVisibility;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -37,8 +40,14 @@ public class MyBatisSavedQueryRepository implements SavedQueryRepository {
 
   private final SavedQueryMapper mapper;
 
-  public MyBatisSavedQueryRepository(SavedQueryMapper mapper) {
+  /** 이 설치본의 이름 비교 기준(WD-1094) — 매퍼가 문을 고르는 MyBatis databaseId 에서 한 번 정한다. */
+  private final NameComparison nameComparison;
+
+  /** 이름 비교 기준은 SqlSessionFactory 의 databaseId 에서 정한다({@link NameComparison#forDatabaseId}). */
+  public MyBatisSavedQueryRepository(SavedQueryMapper mapper, SqlSessionFactory sqlSessionFactory) {
     this.mapper = mapper;
+    this.nameComparison =
+        NameComparison.forDatabaseId(sqlSessionFactory.getConfiguration().getDatabaseId());
   }
 
   @Override
@@ -179,9 +188,20 @@ public class MyBatisSavedQueryRepository implements SavedQueryRepository {
     return mapper.countOtherUserCharts(savedQueryId, ownerId);
   }
 
-  /** 같은 소유자·같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  /**
+   * 같은 소유자·같은 이름 존재 여부(WD-824). 비교 방식은 DB 별 매퍼 문이 정한다(WD-1094) — PostgreSQL 은 앞뒤·안쪽 유니코드 공백을 ASCII
+   * 공백으로 바꾼 뒤 lower(trim), 그 밖은 ASCII trim.
+   */
   @Override
   public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
-    return mapper.countByOwnerAndName(ownerId, name, excludeId) > 0;
+    return mapper.countByOwnerAndName(
+            ownerId, name, excludeId, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII)
+        > 0;
+  }
+
+  /** SQL 이 쓰는 비교 기준(WD-1094) — 생성 시 databaseId 로 정한 값. */
+  @Override
+  public NameComparison nameComparison() {
+    return nameComparison;
   }
 }

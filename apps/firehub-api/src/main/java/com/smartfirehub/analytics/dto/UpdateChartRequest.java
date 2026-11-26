@@ -31,6 +31,11 @@ public record UpdateChartRequest(
     Boolean isShared,
     LocalDateTime expectedUpdatedAt) {
 
+  /** 이름 앞뒤 유니코드 공백을 걷는다(WD-1094). null(변경 없음)은 그대로 null 로 둔다. */
+  public UpdateChartRequest {
+    name = TextRules.strip(name);
+  }
+
   /** 기준 버전 없이 만드는 기존 호출부용 — 비교하지 않는다. */
   public UpdateChartRequest(
       String name,

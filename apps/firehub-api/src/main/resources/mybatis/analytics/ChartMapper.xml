@@ -220,7 +220,21 @@
     DELETE FROM chart WHERE id = #{id} AND created_by = #{userId}
   </delete>
 
-  <!-- WD-824: 같은 소유자·같은 이름(lower(trim) 비교) 차트 수. excludeId 는 수정 시 자기 자신 제외. -->
+  <!--
+    WD-824: 같은 소유자·같은 이름 차트 수. excludeId 는 수정 시 자기 자신 제외.
+    WD-1094: PG 는 앞뒤·안쪽 유니코드 공백(ws)을 ASCII 공백(sp)으로 바꾼 뒤 lower(trim) 비교한다(스마트 작업 ProactiveJobMapper 와
+    같은 구조). databaseId 없는 아래 문 = 공통 문(ASCII trim)이며 Tibero 와 매핑되지 않은 DB 가 쓴다 — 개명 판정
+    (MyBatisChartRepository 생성자)도 같은 databaseId 를 읽어 SQL 과 판정이 어긋나지 않는다.
+  -->
+  <select id="countByOwnerAndName" resultType="_long" databaseId="postgresql">
+    SELECT COUNT(*) FROM chart t
+     WHERE t.created_by = #{ownerId}
+       AND lower(trim(translate(t.name, #{ws}, #{sp}))) = lower(trim(translate(#{name}, #{ws}, #{sp})))
+    <if test="excludeId != null">
+       AND t.id &lt;&gt; #{excludeId}
+    </if>
+  </select>
+
   <select id="countByOwnerAndName" resultType="_long">
     SELECT COUNT(*) FROM chart t
      WHERE t.created_by = #{ownerId}

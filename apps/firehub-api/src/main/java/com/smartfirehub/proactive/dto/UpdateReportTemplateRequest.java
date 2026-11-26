@@ -2,8 +2,10 @@ package com.smartfirehub.proactive.dto;
 
 import com.smartfirehub.global.validation.DescriptionLimits;
 import com.smartfirehub.global.validation.MaxJsonSize;
+import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.proactive.validation.ReportSectionLimits;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -18,7 +20,11 @@ import java.util.Map;
  */
 public record UpdateReportTemplateRequest(
     // DB 한도(varchar(200))를 넘으면 500 이 났다 — 400 으로 이유를 알린다(WD-430)
-    @NotBlank(message = "템플릿 이름은 필수입니다.") @Size(max = 200, message = "이름은 200자 이내여야 합니다.")
+    // WD-1094: @NotBlank 는 제로폭 문자(U+200B 등 서식·제어·결합·채움 문자)만인 이름을 못 거른다 — 이런 이름은 strip 으로도
+    // 안 지워져 화면엔 빈 이름으로 보이므로, 보이는 글자가 하나도 없는 이름을 HAS_TEXT 로 막는다(문구는 같게 둔다)
+    @NotBlank(message = "템플릿 이름은 필수입니다.")
+        @Size(max = 200, message = "이름은 200자 이내여야 합니다.")
+        @Pattern(regexp = TextRules.HAS_TEXT, message = "템플릿 이름은 필수입니다.")
         String name,
     @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.REPORT_TEMPLATE_TOO_LONG)
         String description,
@@ -30,6 +36,11 @@ public record UpdateReportTemplateRequest(
         List<Map<String, Object>> sections,
     String style,
     LocalDateTime expectedUpdatedAt) {
+
+  /** 이름 앞뒤의 유니코드 공백을 걷는다(WD-1094) — 보조 생성자도 이 정식 생성자를 거치므로 항상 적용. null(바꾸지 않음)은 null. */
+  public UpdateReportTemplateRequest {
+    name = TextRules.strip(name);
+  }
 
   /** 기준 버전 없이 만드는 기존 호출부용 — 비교하지 않는다. */
   public UpdateReportTemplateRequest(

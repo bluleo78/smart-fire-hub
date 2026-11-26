@@ -216,6 +216,39 @@ class ReportTemplateControllerTest {
     verify(reportTemplateService, never()).createTemplate(any(), anyLong());
   }
 
+  /**
+   * WD-1094: NBSP·U+3000 처럼 @NotBlank 가 못 거르는 글자뿐인 이름은 서비스의 strip 뒤 빈 이름이 되므로 보이는 글자 없는 이름으로 400
+   * 거절한다. 생성·수정 모두 같은 문구이며 서비스는 부르지 않는다.
+   */
+  @Test
+  void createAndUpdateTemplate_invisibleOnlyName_returns400() throws Exception {
+    mockAuth("proactive:write");
+    for (String blank : new String[] {"\u00A0", "\u3000\u3000", "\u2007", "\u00A0\u3000"}) {
+      mockMvc
+          .perform(
+              post("/api/v1/proactive/templates")
+                  .header("Authorization", "Bearer valid-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(
+                          new CreateReportTemplateRequest(blank, null, List.of(), null))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.name").value("템플릿 이름은 필수입니다."));
+      mockMvc
+          .perform(
+              put("/api/v1/proactive/templates/5")
+                  .header("Authorization", "Bearer valid-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(
+                          new UpdateReportTemplateRequest(blank, null, null, null))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.name").value("템플릿 이름은 필수입니다."));
+    }
+    verify(reportTemplateService, never()).createTemplate(any(), anyLong());
+    verify(reportTemplateService, never()).updateTemplate(anyLong(), any(), anyLong());
+  }
+
   /** WD-430: 200자를 넘는 이름은 DB 길이 오류로 500 이 났다 — 생성·수정 모두 400 으로 이유를 알린다. */
   @Test
   void createAndUpdateTemplate_nameOver200_returns400WithReason() throws Exception {

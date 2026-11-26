@@ -10,6 +10,7 @@ import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.util.LikePatternUtils;
+import com.smartfirehub.global.validation.PgEdgeSpaceChars;
 import com.smartfirehub.global.validation.TextRules;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -31,6 +32,9 @@ import org.springframework.stereotype.Repository;
 public class JooqAnalyticsDashboardRepository implements AnalyticsDashboardRepository {
 
   private final DSLContext dsl;
+
+  /** 이름 비교용 공백 정규화 SQL — PG 서버 인코딩별 translate 쌍을 고른다(WD-1162). */
+  private final PgEdgeSpaceChars edgeSpaceChars;
 
   // dashboard table
   private static final Table<?> D = table(name("dashboard"));
@@ -308,14 +312,16 @@ public class JooqAnalyticsDashboardRepository implements AnalyticsDashboardRepos
         r.get(D_UPDATED_AT));
   }
 
-
-  /** 같은 소유자·같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  /** 같은 소유자·같은 이름(유니코드 공백·대소문자 무시) 존재 여부(WD-824, WD-1094). */
   @Override
   public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
     Condition c =
         D_CREATED_BY
             .eq(ownerId)
-            .and(lower(trim(D_NAME)).eq(lower(trim(val(name, String.class)))));
+            .and(
+                edgeSpaceChars
+                    .normalize(D_NAME)
+                    .eq(edgeSpaceChars.normalize(val(name, String.class))));
     if (excludeId != null) {
       c = c.and(D_ID.ne(excludeId));
     }

@@ -43,18 +43,22 @@ class TiberoMyBatisLockUpdatedAtByIdContractTest extends LockUpdatedAtByIdContra
     savedQueryRepository =
         poc.transactional(
             SavedQueryRepository.class,
-            new MyBatisSavedQueryRepository(poc.mapper(SavedQueryMapper.class)));
+            new MyBatisSavedQueryRepository(
+                poc.mapper(SavedQueryMapper.class), poc.sqlSessionFactory()));
     chartRepository =
         poc.transactional(
-            ChartRepository.class, new MyBatisChartRepository(poc.mapper(ChartMapper.class), om));
+            ChartRepository.class,
+            new MyBatisChartRepository(poc.mapper(ChartMapper.class), om, poc.sqlSessionFactory()));
     dashboardRepository =
         poc.transactional(
             AnalyticsDashboardRepository.class,
-            new MyBatisAnalyticsDashboardRepository(poc.mapper(AnalyticsDashboardMapper.class)));
+            new MyBatisAnalyticsDashboardRepository(
+                poc.mapper(AnalyticsDashboardMapper.class), poc.sqlSessionFactory()));
     reportTemplateRepository =
         poc.transactional(
             ReportTemplateRepository.class,
-            new MyBatisReportTemplateRepository(poc.mapper(ReportTemplateMapper.class), om));
+            new MyBatisReportTemplateRepository(
+                poc.mapper(ReportTemplateMapper.class), om, poc.sqlSessionFactory()));
     proactiveJobRepository =
         poc.transactional(
             ProactiveJobRepository.class,

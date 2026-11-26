@@ -5,6 +5,7 @@ import com.smartfirehub.analytics.dto.DashboardResponse;
 import com.smartfirehub.analytics.dto.DeleteImpactResponse;
 import com.smartfirehub.analytics.dto.UpdateDashboardRequest;
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.naming.NameComparison;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -57,8 +58,15 @@ public interface AnalyticsDashboardRepository {
 
   boolean deleteById(Long id, Long userId);
 
-  /**
-   * 같은 소유자에게 같은 이름(앞뒤 공백·대소문자 무시)의 대시보드가 있는지(WD-824). excludeId 가 있으면 그 행은 뺀다(수정 시 자기 자신).
-   */
+  /** 같은 소유자에게 같은 이름(앞뒤 공백·대소문자 무시)의 대시보드가 있는지(WD-824). excludeId 가 있으면 그 행은 뺀다(수정 시 자기 자신). */
   boolean existsByOwnerAndName(long ownerId, String name, Long excludeId);
+
+  /**
+   * {@link #existsByOwnerAndName} 의 SQL 이 쓰는 이름 비교 기준(WD-1094). 개명 판정이 이 기준을 따라야 SQL 이 같게 보는 이름을
+   * 개명으로 놓치지 않는다 — DB 마다 SQL 이 달라 구현이 답한다. 기본값은 PostgreSQL(jOOQ) 구현의 UNICODE_TRIM 이고 MyBatis 구현만
+   * databaseId 로 재정의한다.
+   */
+  default NameComparison nameComparison() {
+    return NameComparison.UNICODE_TRIM;
+  }
 }

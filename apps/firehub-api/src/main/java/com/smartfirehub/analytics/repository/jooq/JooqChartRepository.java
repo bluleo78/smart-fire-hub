@@ -11,6 +11,7 @@ import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.util.LikePatternUtils;
+import com.smartfirehub.global.validation.PgEdgeSpaceChars;
 import com.smartfirehub.global.validation.TextRules;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -38,6 +39,9 @@ import tools.jackson.databind.ObjectMapper;
 public class JooqChartRepository implements ChartRepository {
 
   private final DSLContext dsl;
+
+  /** 이름 비교용 공백 정규화 SQL — PG 서버 인코딩별 translate 쌍을 고른다(WD-1162). */
+  private final PgEdgeSpaceChars edgeSpaceChars;
 
   /** 매 호출마다 ObjectMapper를 새로 생성하지 않도록 스프링 빈으로 주입받아 재사용 (#182) */
   private final ObjectMapper objectMapper;
@@ -461,14 +465,16 @@ public class JooqChartRepository implements ChartRepository {
     }
   }
 
-
-  /** 같은 소유자·같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  /** 같은 소유자·같은 이름(유니코드 공백·대소문자 무시) 존재 여부(WD-824, WD-1094). */
   @Override
   public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
     Condition c =
         C_CREATED_BY
             .eq(ownerId)
-            .and(lower(trim(C_NAME)).eq(lower(trim(val(name, String.class)))));
+            .and(
+                edgeSpaceChars
+                    .normalize(C_NAME)
+                    .eq(edgeSpaceChars.normalize(val(name, String.class))));
     if (excludeId != null) {
       c = c.and(C_ID.ne(excludeId));
     }

@@ -71,9 +71,14 @@ public interface AnalyticsDashboardMapper {
   /** 주인의 대시보드를 지운다(위젯은 FK CASCADE). 지운 행 수. */
   int deleteByIdAndOwner(@Param("id") Long id, @Param("userId") Long userId);
 
-  /** 같은 소유자·같은 이름(앞뒤 공백·대소문자 무시)의 대시보드 수(WD-824). excludeId 가 null 이면 제외 없음. */
+  /**
+   * 같은 소유자·같은 이름(앞뒤 공백·대소문자 무시)의 대시보드 수(WD-824). excludeId 가 null 이면 제외 없음. ws/sp 는 PG 판이 유니코드 공백을
+   * ASCII 공백으로 바꾸는 translate 인자다(WD-1094) — 공통 문(Tibero 등)은 쓰지 않는다.
+   */
   long countByOwnerAndName(
       @Param("ownerId") long ownerId,
       @Param("name") String name,
-      @Param("excludeId") Long excludeId);
+      @Param("excludeId") Long excludeId,
+      @Param("ws") String ws,
+      @Param("sp") String sp);
 }

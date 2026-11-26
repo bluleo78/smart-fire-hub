@@ -3,8 +3,10 @@ package com.smartfirehub.proactive.repository.mybatis;
 import static com.smartfirehub.global.platformdb.mybatis.PlatformText.blankToNull;
 
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.naming.NameComparison;
 import com.smartfirehub.global.platformdb.mybatis.PlatformJson;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
 import com.smartfirehub.proactive.dto.ReportTemplateSummaryResponse;
 import com.smartfirehub.proactive.repository.ReportTemplateRepository;
@@ -17,6 +19,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
@@ -34,9 +37,16 @@ public class MyBatisReportTemplateRepository implements ReportTemplateRepository
   private final ReportTemplateMapper mapper;
   private final ObjectMapper objectMapper;
 
-  public MyBatisReportTemplateRepository(ReportTemplateMapper mapper, ObjectMapper objectMapper) {
+  /** 이 설치본의 이름 비교 기준(WD-1094) — 매퍼가 문을 고르는 MyBatis databaseId 에서 한 번 정한다. */
+  private final NameComparison nameComparison;
+
+  /** 이름 비교 기준은 SqlSessionFactory 의 databaseId 에서 정한다({@link NameComparison#forDatabaseId}). */
+  public MyBatisReportTemplateRepository(
+      ReportTemplateMapper mapper, ObjectMapper objectMapper, SqlSessionFactory sqlSessionFactory) {
     this.mapper = mapper;
     this.objectMapper = objectMapper;
+    this.nameComparison =
+        NameComparison.forDatabaseId(sqlSessionFactory.getConfiguration().getDatabaseId());
   }
 
   /**
@@ -144,9 +154,20 @@ public class MyBatisReportTemplateRepository implements ReportTemplateRepository
         r.updatedAt());
   }
 
-  /** 같은 소유자·같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  /**
+   * 본인 양식 + 기본 양식(user_id NULL) 중 같은 이름 존재 여부(WD-824). 비교 방식은 DB 별 매퍼 문이 정한다(WD-1094) — PostgreSQL
+   * 은 앞뒤·안쪽 유니코드 공백을 ASCII 공백으로 바꾼 뒤 lower(trim), 그 밖은 ASCII trim.
+   */
   @Override
   public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
-    return mapper.countByOwnerAndName(ownerId, name, excludeId) > 0;
+    return mapper.countByOwnerAndName(
+            ownerId, name, excludeId, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII)
+        > 0;
+  }
+
+  /** SQL 이 쓰는 비교 기준(WD-1094) — 생성 시 databaseId 로 정한 값. */
+  @Override
+  public NameComparison nameComparison() {
+    return nameComparison;
   }
 }

@@ -220,6 +220,8 @@ public class SavedQueryService {
         userId,
         auditBefore.name(),
         req.name(),
+        // 개명 판정은 저장소 SQL 이 실제로 쓰는 비교 기준을 따른다(WD-1094) — PG 는 유니코드 공백까지, Tibero 는 ASCII 만.
+        savedQueryRepository.nameComparison(),
         () -> savedQueryRepository.existsByOwnerAndName(userId, req.name(), id));
 
     // 연결 데이터셋을 바꾸는 경우만 판정한다(create 와 같은 404) — 웹 편집기가 기존 값(편집자가 자격을 잃은 숨김 id 포함)을 그대로 되돌려
@@ -330,7 +332,9 @@ public class SavedQueryService {
     // 복제 이름(WD-824) — 「 (복사본)」, 쓰이면 「 (복사본 2)」… 200자 안으로 원래 이름을 잘라 맞춘다(WD-430).
     // 후보마다 그 이름의 잠금을 먼저 잡고 존재를 확인해, 실제로 넣는 이름이 항상 잠겨 있게 한다
     // (같은 원본의 동시 복제가 같은 이름을 고르지 못하게). 잠금은 커밋 때 풀리므로 몇 개 쥐어도 된다.
-    String originalName = raw.name();
+    // 원래 이름의 앞뒤 유니코드 공백을 먼저 걷는다(WD-1094) — 요청 레코드가 넣을 때 걷으므로, 걷지 않은 후보로 잠그고 검사하면 검사한 이름과 저장된 이름이
+    // 어긋난다.
+    String originalName = TextRules.strip(raw.name());
     String cloneName =
         ResourceNameGuard.copyName(
             originalName,
