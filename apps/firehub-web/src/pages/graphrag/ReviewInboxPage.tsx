@@ -18,6 +18,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
+import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useMyPermissions } from '@/hooks/queries/useMyPermissions';
 import {
@@ -346,7 +347,8 @@ export default function ReviewInboxPage() {
           </TableHeader>
           <TableBody>
             {(isLoading || waiting) && (
-              <TableRow><TableCell colSpan={colCount} className="text-muted-foreground text-center">불러오는 중...</TableCell></TableRow>
+              // 로딩은 공용 스켈레톤만 쓴다 — 표 aria-busy 와 0건·오프라인 안내와의 모양 통일(WD-1134)
+              <TableSkeletonRows columns={colCount} rows={5} />
             )}
             {/* 조회 실패를 「항목 없음」으로 그리지 않는다 (WD-126) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
                 이미 받은 행이 있는 상태에서 「더 보기」만 실패한 경우는 행을 그대로 둔다. */}
@@ -361,7 +363,8 @@ export default function ReviewInboxPage() {
               <TableEmptyRow colSpan={colCount} message={offlineListMessage('AI 검수')} />
             )}
             {!isLoading && !waiting && !offline && !isError && (pending?.length ?? 0) === 0 && (
-              <TableRow><TableCell colSpan={colCount} className="text-muted-foreground text-center">검수 대기 중인 항목이 없습니다.</TableCell></TableRow>
+              // 0건 안내는 공용 TableEmptyRow 만 쓴다 — role="status" 낭독과 오프라인 안내와의 모양 통일(WD-1134)
+              <TableEmptyRow colSpan={colCount} message="검수 대기 중인 항목이 없습니다." />
             )}
             {pending?.map((row) => (
               <ReviewRow
