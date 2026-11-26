@@ -662,6 +662,46 @@ test.describe('홈 페이지', () => {
   });
 
   /**
+   * 회귀: WD-1115 — 최근 사용 카드 머리줄의 「전체 보기」(×2)와 빈 상태 「만들기」(×2) 링크는 글자 크기 그대로
+   * 클릭 영역이 16~17px 높이뿐이라 디자인 가이드의 최소 클릭 타깃(32×32)에 못 미쳤다.
+   * 네 링크 모두 박스가 32×32 이상이고, 눌렀을 때 여전히 제 주소로 이동하며, 카드 머리줄 높이는 늘지 않아야 한다.
+   */
+  test('최근 사용 카드의 「전체 보기」·「만들기」 링크 클릭 영역이 32×32 이상이다 (WD-1115)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 「데이터셋 만들기」 링크는 생성 권한이 있고 목록이 비었을 때만 보인다 — 기본 모킹은 대시보드가 비어 있어 「대시보드 만들기」가 보인다
+    await grantDatasetPermissions(page, [...DATASET_WRITE_PERMISSIONS, ...HOME_PIPELINE_PERMISSIONS]);
+    await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse([]));
+    await page.goto('/');
+
+    const dashboardsCard = page.locator('[data-slot="card"]').filter({ has: page.getByRole('heading', { name: '최근 대시보드' }) });
+    const datasetsCard = page.locator('[data-slot="card"]').filter({ has: page.getByRole('heading', { name: '최근 데이터셋' }) });
+    const targets = [
+      { link: dashboardsCard.getByRole('link', { name: '전체 보기' }), href: '/analytics/dashboards' },
+      { link: dashboardsCard.getByRole('link', { name: '만들기' }), href: '/analytics/dashboards' },
+      { link: datasetsCard.getByRole('link', { name: '전체 보기' }), href: '/data/datasets' },
+      { link: datasetsCard.getByRole('link', { name: '만들기' }), href: '/data/datasets/new' },
+    ];
+    for (const { link } of targets) {
+      await expect(link).toBeVisible();
+      const box = await link.boundingBox();
+      expect(box!.height).toBeGreaterThanOrEqual(32);
+      expect(box!.width).toBeGreaterThanOrEqual(32);
+    }
+    // 클릭 영역을 넓혀도 머리줄(28px)은 커지지 않는다
+    for (const card of [dashboardsCard, datasetsCard]) {
+      const header = await card.locator('[data-slot="card-header"]').boundingBox();
+      expect(header!.height).toBeLessThanOrEqual(30);
+    }
+    // 눌렀을 때 제 주소로 이동한다
+    for (const { link, href } of targets) {
+      await page.goto('/');
+      await link.click();
+      await expect(page).toHaveURL(new RegExp(`${href}$`));
+    }
+  });
+
+  /**
    * 회귀: 이슈 #62 — 섹션 헤딩(h2/h3)이 SR 네비게이션을 위해 존재해야 한다
    * - 수정 전: <h1>홈</h1> 단 1개만 존재 → SR이 섹션 점프 불가
    * - 수정 후: 각 시각 섹션마다 h2/h3 존재 (시스템 건강 상태/주의 필요/퀵 액션/최근 사용(WD-1071)/활동 피드 + 카드별 h3)
