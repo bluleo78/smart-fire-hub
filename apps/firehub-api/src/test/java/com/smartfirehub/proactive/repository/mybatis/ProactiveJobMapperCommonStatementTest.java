@@ -2,6 +2,7 @@ package com.smartfirehub.proactive.repository.mybatis;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.global.platformdb.mybatis.MyBatisPlatformConfig;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -10,11 +11,14 @@ import java.util.Map;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.core.io.ClassPathResource;
 
 /**
  * WD-1154 — 스마트 작업 이름 중복 검사 {@code countByOwnerAndName} 에 공통 문(databaseId 없음)이 있어, Tibero 와 매핑되지 않은
- * DB(databaseId null)에서도 문이 풀리는지. DB 연결 없이 매퍼 XML 을 databaseId 별 Configuration 으로 읽는다.
+ * DB(databaseId null)에서도 문이 풀리는지(tibero 판 선택은 WD-1165 부터 여기서 직접 본다). DB 연결 없이 매퍼 XML 을 databaseId 별 Configuration 으로 읽는다.
  */
 class ProactiveJobMapperCommonStatementTest {
 
@@ -53,19 +57,22 @@ class ProactiveJobMapperCommonStatementTest {
     return c.getMappedStatement(STATEMENT_ID, false).getBoundSql(params).getSql().toLowerCase();
   }
 
-  @Test
-  void nullDatabaseId_resolvesCommonStatementWithoutTranslate() {
-    Configuration c = load(null);
+  /**
+   * 공통 문(databaseId 없음)을 쓰는 경우 — 매핑되지 않은 DB(null, WD-1154)와 tibero(WD-1165) 모두 translate 없는 문으로 풀린다.
+   */
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(strings = MyBatisPlatformConfig.TIBERO)
+  void commonStatementWithoutTranslate(String databaseId) {
+    Configuration c = load(databaseId);
     assertThat(c.hasStatement(STATEMENT_ID, false)).isTrue();
     assertThat(sql(c)).doesNotContain("translate");
   }
 
   @Test
   void postgresql_resolvesTranslateStatement() {
-    Configuration c = load("postgresql");
+    Configuration c = load(MyBatisPlatformConfig.POSTGRESQL);
     assertThat(c.hasStatement(STATEMENT_ID, false)).isTrue();
     assertThat(sql(c)).contains("translate");
   }
-
-  // tibero 판 선택(공통 문)은 PlatformMapperLoadTest 가 실제 조립으로 본다.
 }

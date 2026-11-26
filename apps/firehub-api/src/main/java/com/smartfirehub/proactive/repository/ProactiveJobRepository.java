@@ -156,10 +156,8 @@ public interface ProactiveJobRepository {
 
   /**
    * {@link #existsByOwnerAndName} 의 SQL 이 쓰는 이름 비교 기준(WD-1108). 개명 판정이 이 기준을 따라야 SQL 이 같게 보는 이름을
-   * 개명으로 놓치지 않는다 — DB 마다 SQL 이 달라 구현이 답한다. 기본값은 PostgreSQL(jOOQ) 구현의 UNICODE_TRIM 이고 MyBatis 구현만
-   * databaseId 로 재정의한다(WD-1154).
+   * 개명으로 놓치지 않는다. 구현마다 SQL 이 달라 반드시 답한다 — 기본값을 두면 새 구현이 재정의를 잊어도 조용히 어긋난다(WD-1108
+   * 재발 경로, WD-1165).
    */
-  default NameComparison nameComparison() {
-    return NameComparison.UNICODE_TRIM;
-  }
+  NameComparison nameComparison();
 }

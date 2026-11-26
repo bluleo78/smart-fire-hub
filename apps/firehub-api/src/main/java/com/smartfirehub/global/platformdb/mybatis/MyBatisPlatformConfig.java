@@ -62,7 +62,7 @@ public class MyBatisPlatformConfig {
   public static final String ENABLED_PROPERTY = "firehub.platform-db.mybatis.enabled";
 
   /** Tibero 의 databaseId. 벤더별 전역 설정(null 바인드 타입·타입 핸들러)을 이 값으로 가른다. */
-  static final String TIBERO = "tibero";
+  public static final String TIBERO = "tibero";
 
   /**
    * PostgreSQL 의 databaseId — 매퍼 XML 의 {@code databaseId="postgresql"} 판과 같은 값. 저장소가 매퍼가 고른 문에 맞춰
