@@ -95,8 +95,9 @@ function WidgetBodySpinner({ testId }: { testId?: string }) {
 /**
  * 설정이 가려졌을 때 쓰는 빈 차트 설정 — 모듈 상수로 둬 매 렌더 새 객체가 생겨
  * QueuedChartArea 의 useMemo 판정이 깨지지 않게 한다(WD-1146).
+ * yAxis 배열까지 얼려 공유 상수를 실수로 바꾸지 못하게 한다(WD-1163).
  */
-const EMPTY_CHART_CONFIG: ChartConfig = Object.freeze({ xAxis: '', yAxis: [] as string[] });
+const EMPTY_CHART_CONFIG: ChartConfig = Object.freeze({ xAxis: '', yAxis: Object.freeze([]) as unknown as string[] });
 
 /**
  * ChartRenderer 를 실제로 그리는 자리(WD-1072) — 위젯 여러 개가 한 커밋에 recharts 를 그리면 메인 스레드가 길게 막히므로
@@ -109,12 +110,13 @@ const EMPTY_CHART_CONFIG: ChartConfig = Object.freeze({ xAxis: '', yAxis: [] as 
 function QueuedChartArea({
   tableView,
   ...rendererProps
-}: { tableView: boolean } & Omit<ComponentProps<typeof ChartRenderer>, 'fillParent' | 'view'>) {
-  const { chartType, config, columns, data, inferAxes } = rendererProps;
-  // inferAxes 는 undefined 일 수 있다 — 그러면 판정 함수의 기본값(true)이 렌더러와 같게 적용된다
+}: { tableView: boolean } & Omit<ComponentProps<typeof ChartRenderer>, 'fillParent' | 'view' | 'inferAxes'>) {
+  const { chartType, config, columns, data } = rendererProps;
+  // 판정은 늘 축 추론이다 — 대시보드는 inferAxes 를 넘기지 않아 렌더러 기본값(true)과 같고,
+  // 그래서 inferAxes 는 props 에서 빼 두었다(넘길 수 있으면 판정과 렌더가 어긋난다)
   const needsTurn = useMemo(
-    () => chartNeedsRenderTurn(chartType, config, columns, data, inferAxes),
-    [chartType, config, columns, data, inferAxes],
+    () => chartNeedsRenderTurn(chartType, config, columns, data),
+    [chartType, config, columns, data],
   );
   // 표 보기는 SVG 를 그리지 않으므로 메모 밖에서 바로 거른다
   const ready = !tableView && needsTurn;

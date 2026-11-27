@@ -1,5 +1,5 @@
 import { act, render, renderHook } from '@testing-library/react';
-import { createElement, Suspense } from 'react';
+import { createElement, startTransition, Suspense } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -9,7 +9,7 @@ import {
   useWidgetRenderTurn,
 } from './widget-render-queue';
 
-// 시험 API 는 MODE==='test' 에서만 존재한다(vitest 기본)
+// 시험 API 는 운영 빌드(PROD)가 아니면 존재한다 — vitest 를 다른 mode 로 돌려도 있다
 const api = __widgetRenderQueueTestApi!;
 
 // WD-1072: 위젯 그리기 차례 큐 — 한 번에 하나씩만 차례를 받는지 검증한다.
@@ -31,16 +31,24 @@ function tick() {
 function mountStuckRenderer() {
   const never = new Promise<void>(() => {});
   const onRender = vi.fn();
+  const onTurnRender = vi.fn();
   function Stuck({ n }: { n: number }) {
     const turn = useWidgetRenderTurn(true);
     onRender();
+    if (turn) onTurnRender();
     if (turn) throw never;
     void n; // n 은 같은 차례를 다시 렌더시키기 위한 prop 일 뿐 쓰지 않는다
     return null;
   }
   const element = (n: number) => createElement(Suspense, { fallback: null }, createElement(Stuck, { n }));
   const view = render(element(0));
-  return { view, element, renders: () => onRender.mock.calls.length };
+  return {
+    view,
+    element,
+    renders: () => onRender.mock.calls.length,
+    // turn===true 로 그려진 횟수 — markRendering 이 실제로 다시 불렸는지 확인하는 데 쓴다
+    turnRenders: () => onTurnRender.mock.calls.length,
+  };
 }
 
 /** document.visibilityState 를 스텁한다 */
@@ -186,7 +194,12 @@ describe('useWidgetRenderTurn', () => {
         vi.advanceTimersByTime(RENDERING_RELEASE_CAP_MS - 100);
       });
       // 같은 차례를 다시 렌더시켜도(markRendering 재호출) 상한이 새로 시작되면 안 된다
-      a.view.rerender(a.element(1));
+      // 동기 rerender 는 대기 중인 transition(setTurn(true)) 레인을 빼고 그려 turn===false 가 되므로, 같은 transition 레인으로 일으킨다
+      const before = a.turnRenders();
+      act(() => {
+        startTransition(() => a.view.rerender(a.element(1)));
+      });
+      expect(a.turnRenders()).toBeGreaterThan(before);
       act(() => {
         vi.advanceTimersByTime(50);
       });
@@ -288,6 +301,80 @@ describe('useWidgetRenderTurn', () => {
       leave1();
       act(() => {
         vi.advanceTimersByTime(RENDER_TURN_RELEASE_MS);
+      });
+      tick();
+      expect(c.result.current).toBe(true);
+    });
+
+    // WD-1163: 렌더를 시작한 차례는 앞 강제 차례의 커밋으로 끊기지 않는다 (capOverdue 와 무관한 경로)
+    it('렌더를 시작한 차례는 앞 강제 차례가 커밋돼도 끊지 않고 렌더 중 상한까지 기다린다 (WD-1163)', () => {
+      const releaseA = api.enqueueRawGrant(() => {});
+      act(() => {
+        vi.advanceTimersByTime(RENDER_TURN_RELEASE_MS);
+      });
+      tick();
+      // A 가 강제 반납돼 B 가 차례를 받고 곧바로 렌더를 시작한다 — 타이머는 처음부터 렌더 중 상한(8초)이다
+      mountStuckRenderer();
+      act(() => {
+        vi.advanceTimersByTime(RENDER_TURN_RELEASE_MS);
+      });
+      tick();
+      const c = renderHook(() => useWidgetRenderTurn(true));
+      act(() => {
+        releaseA();
+      });
+      tick();
+      expect(c.result.current).toBe(false);
+      act(() => {
+        vi.advanceTimersByTime(RENDERING_RELEASE_CAP_MS);
+      });
+      tick();
+      expect(c.result.current).toBe(true);
+    });
+
+    // WD-1163: capOverdue 해제 고정 — 렌더 시작 전에 상한이 지나 표시된 차례가 렌더를 시작하면 표시를 지워야 한다
+    it('렌더를 시작하면 밀린 강제 반납 표시(capOverdue)를 지워 앞 강제 차례가 커밋돼도 렌더 중 상한까지 기다린다 (WD-1163)', () => {
+      const releaseA = api.enqueueRawGrant(() => {});
+      act(() => {
+        vi.advanceTimersByTime(RENDER_TURN_RELEASE_MS);
+      });
+      tick();
+      // B 는 A 가 아직 커밋하지 않아 상한(500ms)이 지나도 넘기지 못한다 — capOverdue 가 선다
+      const grantB = () => {};
+      api.enqueueRawGrant(grantB);
+      act(() => {
+        vi.advanceTimersByTime(RENDER_TURN_RELEASE_MS);
+      });
+      // 그 뒤에야 B 가 렌더를 시작한다 — capOverdue 를 지워야 한다
+      api.markRendering(grantB);
+      const c = renderHook(() => useWidgetRenderTurn(true));
+      act(() => {
+        releaseA();
+      });
+      tick();
+      expect(c.result.current).toBe(false);
+      act(() => {
+        vi.advanceTimersByTime(RENDERING_RELEASE_CAP_MS);
+      });
+      tick();
+      expect(c.result.current).toBe(true);
+    });
+
+    it('렌더를 시작하지 못한 밀린 차례는 앞 강제 차례가 커밋되면 곧바로 넘긴다', () => {
+      const releaseA = api.enqueueRawGrant(() => {});
+      act(() => {
+        vi.advanceTimersByTime(RENDER_TURN_RELEASE_MS);
+      });
+      tick();
+      // B 는 렌더를 시작하지 않는 원시 grant — 상한이 지났지만 forcedOutstanding 때문에 넘기지 못하고 밀려 있다
+      api.enqueueRawGrant(() => {});
+      act(() => {
+        vi.advanceTimersByTime(RENDER_TURN_RELEASE_MS);
+      });
+      tick();
+      const c = renderHook(() => useWidgetRenderTurn(true));
+      act(() => {
+        releaseA();
       });
       tick();
       expect(c.result.current).toBe(true);
