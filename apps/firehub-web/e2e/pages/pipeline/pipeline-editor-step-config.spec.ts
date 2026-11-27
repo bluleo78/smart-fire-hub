@@ -851,8 +851,8 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
   });
 
   // WD-1139 현상 1 — 목록 위치만 보고 앞 스텝을 선행(조상)으로 그리면, 서로 의존하지 않는 병렬 스텝의 출력에도
-  // [스텝1] 이 붙는다. 의존이 없을 땐 라벨 없이 무라벨 일반 후보로 나와야 한다.
-  test('병렬 스텝은 입력 후보에 [스텝1] 라벨이 붙지 않는다 (WD-1139)', async ({
+  // [스텝1] 이 붙는다. WD-1164 — 의존이 없는 스텝 출력은 조상 라벨 대신 「[스텝N·병렬]」 로 일반 목록 뒤·「·뒤」 앞에 온다.
+  test('병렬 스텝은 입력 후보에 [스텝1] 이 아니라 [스텝1·병렬] 라벨로 일반 후보 뒤에 온다 (WD-1139, WD-1164)', async ({
     authenticatedPage: page,
   }) => {
     // 추출(출력 20)과 변환(출력 30)이 서로 의존하지 않는 고정물 — 변환은 dependsOnStepNames 가 비어 있다.
@@ -872,11 +872,112 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await page.locator('.react-flow__node').filter({ hasText: '변환' }).click();
     await page.getByRole('combobox', { name: '입력 데이터셋' }).click();
     const options = page.getByRole('option');
-    // 자기 출력(최종 30)은 후보에서 빠지고, 조상·자손이 없으므로 무라벨 일반 후보(원본·중간) 2개만 남는다.
+    // 자기 출력(최종 30)은 후보에서 빠지고, 일반 후보(원본) 뒤에 병렬 스텝 출력이 라벨과 함께 온다.
     await expect(options).toHaveCount(2);
     await expect(options.nth(0)).toContainText('원본');
-    await expect(options.nth(1)).toContainText('중간');
-    await expect(options.filter({ hasText: '스텝1' })).toHaveCount(0);
+    await expect(options.nth(1)).toContainText('[스텝1·병렬] 중간');
+    await expect(options.filter({ hasText: /\[스텝1\]/ })).toHaveCount(0);
+  });
+
+  // WD-1164 — 스크립트 「스텝 참조」 버튼도 같은 규칙: 조상이면서 자손인(순환) 스텝은 선행으로 보지 않는다.
+  test('순환 의존 스텝은 스텝 참조 버튼({{#N}})에도 나오지 않는다 (WD-1164)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openInputCandidateChain(page, {
+      steps: [
+        createStep({
+          id: 1,
+          name: '추출',
+          outputDatasetId: 20,
+          outputDatasetName: '중간',
+          dependsOnStepNames: ['변환'],
+        }),
+        createStep({
+          id: 2,
+          name: '변환',
+          stepOrder: 1,
+          outputDatasetId: 30,
+          outputDatasetName: '최종',
+          dependsOnStepNames: ['추출'],
+        }),
+      ],
+    });
+    await page.locator('.react-flow__node').filter({ hasText: '변환' }).click();
+    const panel = page.getByTestId('step-config-panel');
+    await expect(panel.getByRole('group', { name: '의존성' })).toBeVisible();
+    await expect(panel.getByRole('button', { name: /^\{\{#\d+\}\}/ })).toHaveCount(0);
+  });
+
+  // WD-1164 — 조상 → 일반 → 병렬 → 자손 순서와 라벨 번호를 한 화면에서 고정한다.
+  test('입력 후보 순서는 [스텝N] → 일반 → [스텝N·병렬] → [스텝N·뒤] 이다 (WD-1164)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openInputCandidateChain(page, {
+      steps: [
+        createStep({ id: 1, name: '추출', outputDatasetId: 20, outputDatasetName: '중간' }),
+        createStep({
+          id: 2,
+          name: '변환',
+          stepOrder: 1,
+          outputDatasetId: 30,
+          outputDatasetName: '최종',
+          dependsOnStepNames: ['추출'],
+        }),
+        createStep({ id: 3, name: '병렬', stepOrder: 2, outputDatasetId: 40, outputDatasetName: '병렬출력' }),
+        createStep({
+          id: 4,
+          name: '후행',
+          stepOrder: 3,
+          outputDatasetId: 50,
+          outputDatasetName: '후행출력',
+          dependsOnStepNames: ['변환'],
+        }),
+      ],
+      extraDatasets: [
+        createDataset({ id: 40, name: '병렬출력', tableName: 't_par' }),
+        createDataset({ id: 50, name: '후행출력', tableName: 't_post' }),
+      ],
+    });
+    await page.locator('.react-flow__node').filter({ hasText: '변환' }).click();
+    await page.getByRole('combobox', { name: '입력 데이터셋' }).click();
+    const options = page.getByRole('option');
+    await expect(options).toHaveCount(4);
+    await expect(options.nth(0)).toContainText('[스텝1] 중간');
+    await expect(options.nth(1)).toContainText('원본');
+    await expect(options.nth(2)).toContainText('[스텝3·병렬] 병렬출력');
+    await expect(options.nth(3)).toContainText('[스텝4·뒤] 후행출력');
+  });
+
+  // WD-1164 — 순환(잘못된 편집 상태)에서 조상이면서 자손인 스텝은 「·뒤」 경고 그룹으로 보낸다.
+  test('순환 의존 스텝의 출력은 [스텝N] 이 아니라 [스텝N·뒤] 로 끝에 온다 (WD-1164)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openInputCandidateChain(page, {
+      steps: [
+        createStep({
+          id: 1,
+          name: '추출',
+          outputDatasetId: 20,
+          outputDatasetName: '중간',
+          dependsOnStepNames: ['변환'],
+        }),
+        createStep({
+          id: 2,
+          name: '변환',
+          stepOrder: 1,
+          outputDatasetId: 30,
+          outputDatasetName: '최종',
+          dependsOnStepNames: ['추출'],
+        }),
+      ],
+    });
+    await page.locator('.react-flow__node').filter({ hasText: '변환' }).click();
+    await page.getByRole('combobox', { name: '입력 데이터셋' }).click();
+    const options = page.getByRole('option');
+    await expect(options).toHaveCount(2);
+    await expect(options.nth(0)).toContainText('원본');
+    await expect(options.nth(1)).toContainText('[스텝1·뒤] 중간');
+    await expect(options.filter({ hasText: /\[스텝1\]/ })).toHaveCount(0);
   });
 
   // WD-1139 현상 3 — 앞 스텝 출력과 자기 출력이 같은 데이터셋이면 조상 라벨([스텝1])이 먼저 붙어
@@ -913,7 +1014,7 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await expect(options.filter({ hasText: '[이 스텝 출력]' })).toHaveCount(1);
   });
 
-  // WD-1139 현상 3 + 이 계획의 Review Focus 2 — 같은 데이터셋이어도 입력으로 골라 두지 않았으면([스텝 출력] 미선택)
+  // WD-1139 현상 3 — 같은 데이터셋이어도 입력으로 골라 두지 않았으면([스텝 출력] 미선택)
   // 자기 출력은 조상 출력과 겹치더라도 후보에서 완전히 빠져야 한다(라벨·칩 어느 쪽으로도 살아남지 않는다).
   test('미선택 자기 출력은 조상 출력이어도 후보에서 빠진다 (WD-1139)', async ({
     authenticatedPage: page,
@@ -976,7 +1077,9 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await expect(selfOption).toHaveCount(1);
     await selfOption.click();
     await expect(selfOption).toHaveCount(0);
+    // Escape 는 후보 목록만 닫아야 한다 — 에디터 단축키로 새어 스텝 선택이 풀리면 패널이 사라진다.
     await page.keyboard.press('Escape');
+    await expect(panel).toBeVisible();
     await expect(panel.getByText('[이 스텝 출력] 최종')).toHaveCount(0);
 
     // 해제로 값이 바뀌어 저장 버튼이 켜진다 — 눌러 PUT 본문을 캡처한다.
@@ -984,8 +1087,66 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await expect(saveButton).toBeEnabled();
     await saveButton.click();
     const req = await putCapture.waitForRequest();
-    const payload = req.payload as { steps: Array<{ inputDatasetIds: number[] }> };
-    expect(payload.steps[1].inputDatasetIds).toEqual([]);
-    expect(payload.steps[1].inputDatasetIds).not.toContain(30);
+    const payload = req.payload as { steps: Array<{ name: string; inputDatasetIds: number[] }> };
+    const saved = payload.steps.find((st) => st.name === '변환');
+    expect(saved?.inputDatasetIds).toEqual([]);
+  });
+
+  // WD-1164 — 자기 출력 데이터셋이 목록에 없으면(삭제·미로드·열람 권한 없음) 칩이 사라져 자기 참조를 UI 에서 지울 수 없었다.
+  // 목록에 없는 데이터셋은 「열람 권한 없음」과 같은 상황이므로 id·이름을 드러내지 않고 같은 문구로 보여 준다.
+  const HIDDEN_SELF_STEPS = () => [
+    createStep({ id: 1, name: '추출', outputDatasetId: 20, outputDatasetName: '중간' }),
+    createStep({
+      id: 2,
+      name: '변환',
+      stepOrder: 1,
+      outputDatasetId: 99,
+      outputDatasetName: '삭제됨',
+      dependsOnStepNames: ['추출'],
+      inputDatasetIds: [99],
+    }),
+  ];
+
+  test('권한 없는 자기 출력은 id 없이 [이 스텝 출력] 열람 권한 없음 칩 하나로 보이고 X 로 해제된다 (WD-1164)', async ({
+    authenticatedPage: page,
+  }) => {
+    const putCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1', {}, { capture: true });
+    // 변환의 출력 99 는 데이터셋 목록(10·20·30)에 없다 — 입력으로는 99 를 골라 둔 상태.
+    await openInputCandidateChain(page, { steps: HIDDEN_SELF_STEPS() });
+    await page.locator('.react-flow__node').filter({ hasText: '변환' }).click();
+    const panel = page.getByTestId('step-config-panel');
+    const chip = panel.getByText('[이 스텝 출력] 열람 권한 없음');
+    await expect(chip).toHaveCount(1);
+    await expect(chip).toBeVisible();
+    // id·「목록에 없음」 같은 내부 정보는 어디에도 없고, 기존 잠금 칩과 겹쳐 두 번 나오지도 않는다.
+    await expect(panel.getByText('#99')).toHaveCount(0);
+    await expect(panel.getByText('목록에 없음')).toHaveCount(0);
+    await expect(panel.getByText('데이터셋 #')).toHaveCount(0);
+    await expect(panel.getByTestId('dataset-restricted')).toHaveCount(0);
+    await expect(panel.getByRole('combobox', { name: '입력 데이터셋' }).getByText(/열람 권한 없음/)).toHaveCount(1);
+
+    // X(선택 해제)로 지우면 저장 payload 의 입력에서 99 가 빠진다.
+    const remove = panel.getByRole('button', { name: '[이 스텝 출력] 열람 권한 없음 선택 해제' });
+    await expect(remove).toHaveCount(1);
+    await remove.click();
+    await expect(chip).toHaveCount(0);
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const req = await putCapture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ name: string; inputDatasetIds: number[] }> };
+    expect(payload.steps.find((st) => st.name === '변환')?.inputDatasetIds).toEqual([]);
+  });
+
+  // 같은 스텝에 다른 숨은 입력(98)이 있으면 그 하나만 기존 잠금 칩(「열람 권한 없음 1개」)으로 합산되고, 자기 출력 칩과 겹치지 않는다.
+  test('자기 출력 칩과 다른 숨은 입력의 잠금 칩은 서로 다른 데이터셋만 가리켜 겹치지 않는다 (WD-1164)', async ({
+    authenticatedPage: page,
+  }) => {
+    const steps = HIDDEN_SELF_STEPS();
+    steps[1] = { ...steps[1], inputDatasetIds: [99, 98] } as (typeof steps)[number];
+    await openInputCandidateChain(page, { steps });
+    await page.locator('.react-flow__node').filter({ hasText: '변환' }).click();
+    const panel = page.getByTestId('step-config-panel');
+    await expect(panel.getByText('[이 스텝 출력] 열람 권한 없음')).toHaveCount(1);
+    await expect(panel.getByTestId('dataset-restricted')).toHaveCount(1);
+    await expect(panel.getByTestId('dataset-restricted')).toHaveText('열람 권한 없음');
   });
 });

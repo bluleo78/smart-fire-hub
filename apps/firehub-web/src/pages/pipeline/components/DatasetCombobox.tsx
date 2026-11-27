@@ -179,6 +179,7 @@ export default function DatasetCombobox(props: DatasetComboboxProps) {
                   <span
                     role="button"
                     tabIndex={0}
+                    aria-label={`${ds.name} 선택 해제`}
                     className="cursor-pointer rounded-full hover:bg-muted"
                     onClick={(e) => handleRemove(ds.id, e)}
                     onKeyDown={(e) => {

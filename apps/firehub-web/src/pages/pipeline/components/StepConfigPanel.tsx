@@ -39,8 +39,8 @@ import type { PipelineStepResponse } from '@/types/pipeline';
 
 import { useErrorFieldFocus } from '../hooks/useErrorFieldFocus';
 import type { EditorAction, EditorStep,PipelineEditorState } from '../hooks/usePipelineEditor';
-import { collectAncestorTempIds, collectDescendantTempIds } from '../utils/step-descendants';
 import { isUnnamedStep, stepDisplayName } from '../utils/step-display-name';
+import { collectAncestorTempIds, collectDescendantTempIds } from '../utils/step-graph';
 import DatasetCombobox from './DatasetCombobox';
 import { IncrementalProcessingSection } from './IncrementalProcessingSection';
 // 타입만 가져온다 — 편집기 청크는 아래 lazy 로 계속 지연 로드된다
@@ -238,7 +238,8 @@ export default function StepConfigPanel({
     return map;
   }, [datasets]);
 
-  // WD-1074/WD-1089/WD-1139 — 입력 후보 순서: [조상 스텝 출력] → [일반 데이터셋] → [자손 스텝 출력] → [이미 골라 둔 자기 출력].
+  // WD-1074/WD-1089/WD-1139/WD-1164 — 입력 후보 순서: [조상 스텝 출력] → [일반 데이터셋] → [병렬 스텝 출력] → [자손 스텝 출력] → [이미 골라 둔 자기 출력].
+  // 병렬 스텝 출력 = 조상도 자손도 아닌(아직 의존이 이어지지 않은 새 스텝 포함) 다른 스텝의 출력으로 「[스텝N·병렬]」 로 표시한다.
   // 자기 출력은 입력으로 쓰면 자기 참조라 후보에서 뺀다. 자손 스텝 출력은 이번 실행에선 늦게 채워지지만 이전 실행 결과를 읽는
   // 정당한 쓰임이 있어 지우지 않고 「·뒤」 표시로 끝에 둔다.
   // 「조상 스텝」은 목록 위치가 아니라 의존 그래프에서 이 스텝이 (간접으로라도) 의존하는 선행 스텝이다(WD-1139) — 「스텝 삽입」은
@@ -247,6 +248,7 @@ export default function StepConfigPanel({
     if (!step) return [];
     const selfIndex = stepNumber - 1;
     const prev: DatasetOption[] = [];
+    const parallel: DatasetOption[] = [];
     const later: DatasetOption[] = [];
     const selfTail: DatasetOption[] = [];
     // 조상·자손·자기 출력은 일반 목록에서 중복으로 빠져야 하므로 id 를 모아 둔다.
@@ -277,13 +279,25 @@ export default function StepConfigPanel({
       const ds = datasetById.get(selfOutputId);
       if (ds && step.inputDatasetIds.includes(selfOutputId)) {
         selfTail.push({ ...ds, name: `[이 스텝 출력] ${ds.name}` });
+      } else if (!ds && datasetsLoaded && step.inputDatasetIds.includes(selfOutputId)) {
+        // 자기 출력 데이터셋이 목록에 없으면(삭제됨 등) 칩이 안 그려져 자기 참조를 지울 수 없다(WD-1164) —
+        // 목록에 없는 데이터셋은 outputHidden/hiddenCount 가 「열람 권한 없음」으로 다루는 것과 같은 상황이라, id·이름을 노출하지 않고
+        // 같은 문구로 칩을 보여 해제(X)만 가능하게 한다. 이 id 는 후보(datasets)에 들어가므로 DatasetCombobox 의 hiddenCount(잠금 칩)에서는
+        // 빠져 한 데이터셋이 두 칩으로 겹치지 않는다. 로딩 중에는 깜빡임을 막으려 만들지 않는다.
+        selfTail.push({
+          id: selfOutputId,
+          name: '[이 스텝 출력] 열람 권한 없음',
+          tableName: '',
+        });
       }
     }
 
     // 2) 조상 스텝 출력: 「[스텝N]」 접두로 맨 앞에 모은다. 목록 인덱스 오름차순으로 훑어 목록 위치와 무관하게
     //    선행만 라벨을 받는다 — 「스텝 삽입」으로 목록 끝에 붙은 실제 선행도 여기에 온다.
+    //    순환(잘못된 편집 상태)으로 조상이면서 자손인 스텝은 조상 그룹에서 빼 3) 의 「·뒤」 경고 그룹으로 보낸다(WD-1164).
     for (let index = 0; index < state.steps.length; index++) {
-      if (index !== selfIndex && ancestorTempIds.has(state.steps[index].tempId)) {
+      const tempId = state.steps[index].tempId;
+      if (index !== selfIndex && ancestorTempIds.has(tempId) && !descendantTempIds.has(tempId)) {
         pushStepOutput(prev, index, `[스텝${index + 1}]`);
       }
     }
@@ -296,12 +310,21 @@ export default function StepConfigPanel({
       }
     }
 
-    // 4) 위에서 쓴 id(자기·조상·자손 스텝 출력)를 뺀 일반 데이터셋 — 라벨이 붙은 id 가 남아 중복으로 안 나오게
+    // 4) 병렬 스텝 출력: 조상도 자손도 아닌 다른 스텝(의존이 아직 없는 새 스텝 포함)의 출력은 「[스텝N·병렬]」 로
+    //    일반 목록 뒤·「·뒤」 앞에 둔다(WD-1164). 조상·자손에서 이미 나온 출력은 used 로 건너뛴다.
+    for (let index = 0; index < state.steps.length; index++) {
+      const tempId = state.steps[index].tempId;
+      if (index !== selfIndex && !ancestorTempIds.has(tempId) && !descendantTempIds.has(tempId)) {
+        pushStepOutput(parallel, index, `[스텝${index + 1}·병렬]`);
+      }
+    }
+
+    // 5) 위에서 쓴 id(자기·조상·병렬·자손 스텝 출력)를 뺀 일반 데이터셋 — 라벨이 붙은 id 가 남아 중복으로 안 나오게
     //    모든 push 가 끝난 뒤에 필터링해야 한다.
     const regular = datasets.filter((d) => !used.has(d.id));
-    // 5) 조상 → 일반 → 자손 → 자기 출력 순으로 이어 붙인다 — 조상을 맨 앞에, 해제 출구인 자기 출력 칩을 맨 끝에 둔다.
-    return [...prev, ...regular, ...later, ...selfTail];
-  }, [step, state.steps, stepNumber, datasets, datasetById]);
+    // 6) 조상 → 일반 → 병렬 → 자손 → 자기 출력 순으로 이어 붙인다 — 조상을 맨 앞에, 해제 출구인 자기 출력 칩을 맨 끝에 둔다.
+    return [...prev, ...regular, ...parallel, ...later, ...selfTail];
+  }, [step, state.steps, stepNumber, datasets, datasetById, datasetsLoaded]);
 
   // 이 스텝이 의존하는 스텝 중 영구 출력 데이터셋이 없는 (임시 출력) 스텝들
   const tempDependencySteps = useMemo(() => {
@@ -321,10 +344,12 @@ export default function StepConfigPanel({
     // 조상 판정은 입력 후보(inputDatasetOptions)와 같은 collectAncestorTempIds 헬퍼로 얻는다 —
     // 두 UI(스텝 참조 버튼 vs 입력 후보)가 서로 다른 기준으로 선행을 그리지 않게 통일한다(WD-1139).
     const ancestorTempIds = collectAncestorTempIds(state.steps, step.tempId);
+    // 순환(잘못된 편집 상태)으로 조상이면서 자손인 스텝은 선행으로 보지 않는다 — 입력 후보와 같은 규칙(WD-1164).
+    const descendantTempIds = collectDescendantTempIds(state.steps, step.tempId);
 
     return state.steps
       .map((s, i) => ({ step: s, number: i + 1 }))
-      .filter(({ step: s }) => ancestorTempIds.has(s.tempId));
+      .filter(({ step: s }) => ancestorTempIds.has(s.tempId) && !descendantTempIds.has(s.tempId));
   }, [state.steps, step]);
 
   if (!step) {
