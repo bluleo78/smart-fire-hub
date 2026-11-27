@@ -77,6 +77,13 @@ function armReleaseTimer(grant: Grant, ms: number) {
  * 차례를 쥔 grant 가 렌더를 시작했음을 알린다 — 상한을 RENDERING_RELEASE_CAP_MS 로 다시 건다.
  * 멱등이다: 이미 표시됐거나 쥔 차례가 아니면(강제 반납된 뒤의 늦은 렌더 등) 아무것도 하지 않는다.
  * 이미 지나 있던 상한 표시(capOverdue)도 지운다 — 렌더가 시작됐으니 더는 밀린 차례가 아니다.
+ *
+ * capOverdue 를 지우는 까닭: 이미 시작한 렌더를 앞 강제 차례의 커밋으로 끊으면 WD-1146 이 되돌아온다.
+ * 대가: 끊긴 transition 렌더도 8초 상한을 쓴다. WD-1163 실측(위젯 12개·1000행·CPU 12배 최악 부하, 10회):
+ * 끌기 끝 뒤 남은 스피너 런별 최대 중앙값 12650 → 14448ms(약 2초 더), 런별 최대 차례 유지 737 → 4985ms(10회 중 8회 약 5초).
+ * 이득: 강제 반납 6 → 1회. 8초 이상 쥔 차례는 없었다(최대 6211ms). 보통 부하에서는 같았다 — CPU 4배·위젯 6개·120행 남은 스피너 최대
+ * 2538 → 2460ms, CPU 6배·500행 강제 반납 0 → 0회.
+ * 이 실측을 보고 8초 상한을 그대로 두기로 정했다(WD-1163 이슈 결정) — 근거만 여기 남긴다.
  */
 function markRendering(grant: Grant): void {
   if (current !== grant || rendering) return;
@@ -155,6 +162,7 @@ export function useWidgetRenderTurn(ready: boolean): boolean {
 
   // 렌더 단계 부작용이지만 멱등이고 current === grant 가드가 있어 StrictMode 이중 렌더·중단된 transition 에도 안전하다.
   // 렌더 단계에서 하는 이유: 커밋은 렌더가 끝난 뒤라, 느린 렌더 도중 500ms 강제 반납을 막으려면 렌더 시작 시점에 알아야 한다.
+  // 버려진(커밋되지 않은) 렌더가 건 8초 타이머는 current === grant 가드로 무해하다 — 반납(leave)이나 다음 armReleaseTimer 가 취소한다.
   if (turn) markRendering(grant);
 
   useEffect(() => {
@@ -188,8 +196,9 @@ function enqueueRawGrantForTest(grant: () => void): () => void {
 }
 
 /**
- * 시험 전용 API 묶음. Vite 가 import.meta.env.MODE 를 빌드 시 상수로 바꿔 운영 번들에서는 undefined 로 굳고
- * 위 두 함수도 죽은 코드로 제거된다.
+ * 시험 전용 API 묶음. 운영 빌드에서만 빠진다 — vitest 를 다른 mode 로 돌려도 있다.
+ * markRendering 은 훅 없이 렌더 시작 시점을 정해 두려고 그대로 내보낸다(capOverdue 해제 시험용).
+ * Vite 가 import.meta.env.PROD 를 빌드 시 상수로 바꿔 운영 번들에서는 undefined 로 굳고 위 함수들도 죽은 코드로 제거된다.
  */
 export const __widgetRenderQueueTestApi =
-  import.meta.env.MODE === 'test' ? { reset: resetForTest, enqueueRawGrant: enqueueRawGrantForTest } : undefined;
+  !import.meta.env.PROD ? { reset: resetForTest, enqueueRawGrant: enqueueRawGrantForTest, markRendering } : undefined;

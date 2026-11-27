@@ -54,7 +54,8 @@ export function toPlotNumber(value: unknown): number | null {
 
 /**
  * 산점도 X 컬럼이 숫자로 하나도 읽히지 않는가(WD-308) — 그러면 뷰가 「X축은 숫자 컬럼이어야 합니다」 안내만 그린다.
- * ChartRenderer 의 축 안내 건너뛰기와 위젯 그리기 차례 판정(chartNeedsRenderTurn)이 같은 규칙을 쓰도록 하나로 둔다(WD-1146).
+ * 축을 추론하지 않는 빌더 미리보기(inferAxes=false)에서 ChartRenderer 가 축 안내를 건너뛸지 가를 때 쓴다(WD-1146).
+ * 위젯 그리기 차례 판정(chartNeedsRenderTurn)은 늘 축을 추론해 이 규칙을 쓰지 않는다(WD-1163).
  * X 를 고르지 않았거나 행이 없으면 false.
  */
 export function isScatterXNotNumeric(xAxis: string, rows: Record<string, unknown>[]): boolean {
