@@ -1,6 +1,7 @@
 package com.smartfirehub.support.tibero;
 
 import com.smartfirehub.global.platformdb.mybatis.MyBatisPlatformConfig;
+import com.smartfirehub.global.platformdb.tibero.TiberoCharsetCheck;
 import com.smartfirehub.global.platformdb.tibero.TiberoPlatformTenantSession;
 import com.smartfirehub.global.tenant.TenantAwareTransactionManager;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -9,6 +10,7 @@ import java.sql.PreparedStatement;
 import java.util.concurrent.ThreadLocalRandom;
 import javax.sql.DataSource;
 import org.apache.ibatis.session.SqlSessionFactory;
+import org.junit.jupiter.api.Assumptions;
 import org.mybatis.spring.SqlSessionTemplate;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.dao.DuplicateKeyException;
@@ -43,6 +45,9 @@ public final class TiberoPlatformSchema {
 
   /** JVM 당 하나인 하네스. 준비에 실패하면 남기지 않아 다음 호출이 다시 시도한다. */
   private static TiberoPlatformSchema shared;
+
+  /** 문자셋 판정 캐시(JVM 당 한 번 probe). null 이면 아직 안 봤다. */
+  private static TiberoCharsetCheck.Result charsetResult;
 
   private final TiberoTenantRlsSchema rls;
   private final HikariDataSource runtimePool;
@@ -123,6 +128,32 @@ public final class TiberoPlatformSchema {
       }
     }
     throw new IllegalStateException("겹치지 않는 테넌트 id 를 " + TENANT_ID_ATTEMPTS + "번 안에 못 찾았다", last);
+  }
+
+  /**
+   * Tibero DB 문자셋이 UTF-8 이 아니면 호출한 시험을 건너뛴다(WD-1182). 비 UTF-8 이면 유니코드 공백(NBSP·U+3000)이 '?' 로 저장돼 이름
+   * 계약 시험이 원인 모를 isTrue 실패로 보이므로, 분명한 메시지로 건너뛰게 한다. 판정은 JVM 당 한 번만 하고 캐시한다.
+   *
+   * <p>판정이 UNKNOWN 이면 건너뛰지 않고 실패시킨다 — probe 자체가 깨진 것이라 조용히 계약 시험이 건너뛰어지면 커버리지가 몰래 사라진다. 접속 오류 등
+   * probe 예외도 숨기지 않고 그대로 던진다.
+   */
+  public void assumeUtf8Charset() {
+    TiberoCharsetCheck.Result result;
+    synchronized (TiberoPlatformSchema.class) {
+      if (charsetResult == null) {
+        charsetResult = TiberoCharsetCheck.probe(jdbc());
+      }
+      result = charsetResult;
+    }
+    if (result == TiberoCharsetCheck.Result.UNKNOWN) {
+      throw new IllegalStateException(
+          "Tibero DB 문자셋 판정이 UNKNOWN — 문자셋 probe 자체가 깨져 계약 시험을 건너뛰지 않고 실패시킴 (WD-1182)");
+    }
+    Assumptions.assumeTrue(
+        result == TiberoCharsetCheck.Result.UTF8,
+        "Tibero DB 문자셋이 UTF-8 이 아니라(판정: "
+            + result
+            + ") 유니코드 공백 이름 계약 시험을 건너뜀 — 운영 전제는 UTF-8 (WD-1182, ADR 0001)");
   }
 
   /** 소유자 계정의 JdbcTemplate(자동 커밋, 정책 우회) — 픽스처·정리 전용. 리포지토리 동작 확인에 쓰면 격리 시험이 공허해진다. */
