@@ -341,6 +341,12 @@ Tibero 드라이버는 시각을 JVM 기본 시간대로 저장한다. JVM 이 K
 - Tibero 설치본은 `user.timezone=UTC` 를 **기동 시 검사로 강제**한다(WD-496).
 - Tibero 테스트 하네스도 UTC 로 돈다(WD-497).
 
+### 6-1. 문자셋 — UTF-8 전제(WD-1182)
+
+- 운영 Tibero 는 UTF-8(AL32UTF8/UTF8)로 본다. 기동 때 `TiberoCharsetStartupCheck` 가 특수 공백·한글 표본의 왕복과 `LENGTHB` 로 확인하고, 아니면 WARN 만 남긴다(기동은 막지 않는다).
+- 비 UTF-8 이면 문자셋 밖 글자가 `?` 로 저장돼 앞뒤 특수 공백·문자셋 밖 글자 이름의 중복 검사가 좁아진다(스마트 작업은 DB 유니크 제약도 없다).
+- 계약 시험은 비 UTF-8 이면 건너뛴다. 비 UTF-8 PG 의 WD-1162 와 같이 「지원 구성 아님」으로 취급한다.
+
 ### 7. Tibero 테넌트 격리(WD-492)
 
 PG 는 `app_tenant` 롤 + RLS 정책 + 트랜잭션-로컬 GUC(`app.tenant_id`)로 테넌트를 가른다. Tibero 는 같은 모델을 **애플리케이션 컨텍스트 + `DBMS_RLS` 정책**으로 옮겼다. 설계: `docs/superpowers/specs/2026-11-10-wd492-tibero-tenant-rls-design.md`. 스키마는 `db/migration-tibero/V156.1__tibero_tenant_rls.sql`(Tibero 전용 버전, PG 짝 없음)이 만든다.
