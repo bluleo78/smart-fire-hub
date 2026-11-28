@@ -267,6 +267,7 @@ export function useUnsavedChangesGuard(
   // <a> 탐지 사각지대를 우회하지 않는다.
   // (WD-1166) 반환값 — true: 이 호출로는 이동하지 않았고 확인 창이 열려 있다(취소하면 onStay 가 불린다).
   // false: 가로챌 가드가 없어(창이 열려 있어도) 바로 이동했다. 호출한 쪽이 「창이 열렸는가」를 isDialogOpen() 으로 따로 추측하지 않게 한다.
+  // 이때 이 훅의 창이 열려 있었으면 조용히 닫힌다 — 앞서 true 를 받고 기억해 둔 상태는 false 를 받은 호출한 쪽이 스스로 지운다.
   const requestNavigate = useCallback(
     (to: string): boolean => {
       // (WD-1160) click·popstate 와 같은 규칙으로 막을 가드가 있는지 본다. navigate() 는 click 캡처·popstate 를 거치지 않아
@@ -275,6 +276,13 @@ export function useUnsavedChangesGuard(
       // (WD-1166) 이 판정을 열림 여부보다 먼저 한다 — 창이 열려 있어도 그 사이 폼이 깨끗해졌다면 막을 것이 없고,
       // 이동하면 화면이 바뀌어 창도 사라지므로 대상을 유지(true)하지 않고 이동(false)한다.
       if (!pickInterceptingGuard()) {
+        // (WD-1166 리뷰 후속) 이 훅의 창이 열린 채 깨끗해졌으면 이동 전에 창을 닫고 대상을 비운다 — 가드가 이동 뒤에도
+        // 살아 있으면(레이아웃에 걸린 가드 등) 창이 남아, 「이탈」이 옛 대상으로 가거나 history.back() 을 다시 부른다.
+        // 사용자가 고른 것이 아니므로 onStay·onLeave 는 부르지 않는다(반환값 false 설명 참고).
+        if (openRef.current) {
+          setOpenState(false);
+          setPendingTo(null);
+        }
         navigate(to);
         return false;
       }
